@@ -36,12 +36,62 @@ $app->get('/', function(Request $req, Response $res){
 	echo 'hello heroku-restful-slim';
 });
 
-$app->get('/db', function(Request $req, Response $res){
+$app->get('/api/users', function(Request $req, Response $res){
 	$db = $this->get('db');
 	$data = $db->select('users', '*');
-	echo '<pre>';
-	var_dump($data);
-	echo '</pre>';
+	$res->withStatus(200);
+	$res->withHeader('Content-Type', 'application/json');
+	echo json_encode($data);
+});
+
+$app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
+	$id = (int)$args['id'];
+	$db = $this->get('db');
+	$data = $db->select('users', '*', array('id' => $id));
+	$res->withStatus(200);
+	$res->withHeader('Content-Type', 'application/json');
+	echo json_encode($data[0]);
+});
+
+$app->post('/api/users', function(Request $req, Response $res){
+	$user = $req->getParsedBody();
+	$db = $this->get('db');
+	$db->insert('users', array(
+		'name' => $user['name'],
+		'age' => $user['age'],
+		'address' => $user['address']
+	));
+	$lastId = $db->pdo->lastInsertId('users_id_seq');
+	$res->withStatus(200);
+	$res->withHeader('Content-Type', 'application/json');
+	echo json_encode(array('lastId' => $lastId));
+});
+
+$app->put('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
+	$id = (int)$args['id'];
+	$user = $req->getParsedBody();
+	$db = $this->get('db');
+	$data = $db->select('users', '*', array('id' => $id));
+	if(isset($user['name'])) $data[0]['name'] = $user['name'];
+	if(isset($user['age'])) $data[0]['age'] = $user['age'];
+	if(isset($user['address'])) $data[0]['address'] = $user['address'];
+	$ret = $db->update('users', array(
+		'name' => $data[0]['name'],
+		'age' => $data[0]['age'],
+		'address' => $data[0]['address']
+	), array('id' => $id));
+	$res->withStatus(200);
+	$res->withHeader('Content-Type', 'application/json');
+	echo json_encode($data[0]);
+});
+
+$app->delete('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
+	$id = (int)$args['id'];
+	$db = $this->get('db');
+	$ret = $db->delete('users', array('id' => $id));
+	$res->withStatus(200);
+	$res->withHeader('Content-Type', 'application/json');
+	echo $ret;
 });
 
 $app->run();
