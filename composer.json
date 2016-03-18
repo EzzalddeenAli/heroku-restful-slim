@@ -4,6 +4,7 @@
         "catfan/Medoo": "^1.0",
         "php": "^5.6.0",
         "monolog/monolog": "^1.18",
-        "slim/pdo": "~1.9"
+        "slim/pdo": "~1.9",
+        "fpdo/fluentpdo": "dev-master"
     }
 }

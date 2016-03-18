@@ -20,13 +20,10 @@ $config = array(
 $container = new \Slim\Container(array(
 	'settings' => $config
 ));
-$container['db'] = function($c){
+$container['fpdo'] = function($c){
 	$db = $c['settings']['db'];
-	return new \Slim\PDO\Database(
-		'pgsql:dbname='.$db['dbname'].';host='.$db['host'].';port='.$db['port'],
-		$db['user'],
-		$db['pass']
-	);
+	$pdo = new PDO('pgsql:dbname='.$db['dbname'].';host='.$db['host'].';port='.$db['port'], $db['user'], $db['pass']);
+	return new FluentPDO($pdo);
 };
 $container['monolog'] = function($c){
 	$monolog = new Logger('monolog');
@@ -40,14 +37,13 @@ $app = new \Slim\App($container);
 $app->get('/', function(Request $req, Response $res){
 	$log = $this->get('monolog');
 	$log->addDebug('root handler', array('response' => $req));
-	//echo 'hello heroku-restful-slim';
 	phpinfo();
 });
 
 $app->get('/api/users', function(Request $req, Response $res){
-	$db = $this->get('db');
-	$stmt = $db->select()->from('users')->execute();
-	$data = $stmt->fetchAll();
+	$query = $this->fpdo->from('users')->orderBy('id');
+	$data = $query->fetchAll();
+	$this->monolog->addDebug('GET', $data);
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode($data);
@@ -55,9 +51,9 @@ $app->get('/api/users', function(Request $req, Response $res){
 
 $app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
-	$db = $this->get('db');
-	$stmt = $db->select()->from('users')->where('id', '=', $id)->execute();
-	$data = $stmt->fetch();
+	$query = $this->fpdo->from('users')->where('id', $id);
+	$data = $query->fetch();
+	$this->monolog->addDebug('GET', array('id' => $id, $data));
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode($data);
@@ -65,11 +61,10 @@ $app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args)
 
 $app->post('/api/users', function(Request $req, Response $res){
 	$user = $req->getParsedBody();
-	$db = $this->get('db');
-	// PostgresqlではlastInsertId()でIDを取得できるようになってない
-	$insertId = $db->insert(array('name', 'age', 'address'))
-		->into('users')->values(array($user['name'], $user['age'], $user['address']))
-		->execute();
+	$insertId = $this->fpdo->insertInto('users')
+		->values(array('name' => $user['name'], 'age' => $user['age'], 'address' => $user['address']))
+		->execute('users_id_seq');
+	$this->monolog->addDebug('POST', array('insertId' => $insertId, $user));
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode(array('insertId' => $insertId));
@@ -78,18 +73,13 @@ $app->post('/api/users', function(Request $req, Response $res){
 $app->put('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
 	$user = $req->getParsedBody();
-	$db = $this->get('db');
-	$stmt = $db->select()->from('users')->where('id', '=', $id)->execute();
-	$data = $stmt->fetch();
-	if(isset($user['name'])) $data['name'] = $user['name'];
-	if(isset($user['age'])) $data['age'] = $user['age'];
-	if(isset($user['address'])) $data['address'] = $user['address'];
-	$affectedRows = $db->update(array(
-		'name' => $data['name'],
-		'age' => $data['age'],
-		'address' => $data['address']
-	))->table('users')->where('id', '=', $id)
-	->execute();
+	$set = array();
+	foreach($user as $key => $value){
+		$set[$key] = $value;
+	}
+	$affectedRows = $this->fpdo->update('users')
+		->set($set)->where('id', $id)->execute();
+	$this->monolog->addDebug('PUT', array('id' => $id, $set));
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode(array('affectedRows' => $affectedRows));
@@ -97,8 +87,8 @@ $app->put('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args)
 
 $app->delete('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
-	$db = $this->get('db');
-	$affectedRows = $db->delete()->from('users')->where('id', '=', $id)->execute();
+	$affectedRows = $this->fpdo->deleteFrom('users')->where('id', $id)->execute();
+	$this->monolog->addDebug('DELETE', array('id' => $id));
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode(array('affectedRows' => $affectedRows));
