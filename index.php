@@ -3,6 +3,9 @@ require 'vendor/autoload.php';
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
+use Monolog\Handler\FirePHPHandler;
 
 $dbopts = parse_url(getenv('DATABASE_URL'));
 $config = array(
@@ -18,7 +21,7 @@ $config = array(
 $container = new \Slim\Container(array(
 	'settings' => $config
 ));
-$container['db'] = function($c){
+$container['medoo'] = function($c){
 	$db = $c['settings']['db'];
 	return new medoo(array(
 		'database_type' => 'pgsql',
@@ -30,15 +33,22 @@ $container['db'] = function($c){
 		'charset' => 'utf8'
 	));
 };
+$container['monolog'] = function($c){
+	$logger = new Logger('monolog');
+	$logger->pushProcessor(new Monolog\Processor\UidProcessor());
+	$logger->pushHandler(new StreamHandler(__DIR__ . '/dev.log', Logger::DEBUG));
+	$logger->pushHandler(new FirePHPHandler(Logger::DEBUG));
+	return $logger;
+};
 $app = new \Slim\App($container);
 
 $app->get('/', function(Request $req, Response $res){
-	echo 'hello heroku-restful-slim';
+	phpinfo();
 });
 
 $app->get('/api/users', function(Request $req, Response $res){
-	$db = $this->get('db');
-	$data = $db->select('users', '*');
+	$data = $this->medoo->select('users', '*');
+	$this->monolog->addDebug('GET', $data);
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode($data);
@@ -46,8 +56,8 @@ $app->get('/api/users', function(Request $req, Response $res){
 
 $app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
-	$db = $this->get('db');
-	$data = $db->select('users', '*', array('id' => $id));
+	$data = $this->medoo->select('users', '*', array('id' => $id));
+	$this->monolog->addDebug('GET', $data);
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode($data[0]);
@@ -55,43 +65,40 @@ $app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args)
 
 $app->post('/api/users', function(Request $req, Response $res){
 	$user = $req->getParsedBody();
-	$db = $this->get('db');
-	$db->insert('users', array(
+	$this->medoo->insert('users', array(
 		'name' => $user['name'],
 		'age' => $user['age'],
 		'address' => $user['address']
 	));
-	$lastId = $db->pdo->lastInsertId('users_id_seq');
+	$insertId = $this->medoo->pdo->lastInsertId('users_id_seq');
+	$user['id'] =  $insertId;
+	$this->monolog->addDebug('POST', $user);
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo json_encode(array('lastId' => $lastId));
+	echo json_encode($user);
 });
 
 $app->put('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
 	$user = $req->getParsedBody();
-	$db = $this->get('db');
-	$data = $db->select('users', '*', array('id' => $id));
-	if(isset($user['name'])) $data[0]['name'] = $user['name'];
-	if(isset($user['age'])) $data[0]['age'] = $user['age'];
-	if(isset($user['address'])) $data[0]['address'] = $user['address'];
-	$ret = $db->update('users', array(
-		'name' => $data[0]['name'],
-		'age' => $data[0]['age'],
-		'address' => $data[0]['address']
-	), array('id' => $id));
+	$set = array();
+	foreach($user as $key => $value){
+		$set[$key] = $value;
+	}
+	$affectedRows = $this->medoo->update('users', $set, array('id' => $id));
+	$this->monolog->addDebug('PUT', $set);
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo json_encode($data[0]);
+	echo json_encode(array('affectedRows' => $affectedRows));
 });
 
 $app->delete('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
-	$db = $this->get('db');
-	$ret = $db->delete('users', array('id' => $id));
+	$affectedRows = $this->medoo->delete('users', array('id' => $id));
+	$this->monolog->addDebug('DELETE', array('affectedRows' => $affectedRows, 'id' => $id));
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo $ret;
+	echo json_encode(array('affectedRows' => $affectedRows));
 });
 
 $app->run();
