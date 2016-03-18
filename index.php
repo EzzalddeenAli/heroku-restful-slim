@@ -3,6 +3,8 @@ require 'vendor/autoload.php';
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
 
 $dbopts = parse_url(getenv('DATABASE_URL'));
 $config = array(
@@ -20,25 +22,32 @@ $container = new \Slim\Container(array(
 ));
 $container['db'] = function($c){
 	$db = $c['settings']['db'];
-	return new medoo(array(
-		'database_type' => 'pgsql',
-		'database_name' => $db['dbname'],
-		'server' => $db['host'],
-		'username' => $db['user'],
-		'password' => $db['pass'],
-		'port' => $db['port'],
-		'charset' => 'utf8'
-	));
+	return new \Slim\PDO\Database(
+		'pgsql:dbname='.$db['dbname'].';host='.$db['host'].';port='.$db['port'],
+		$db['user'],
+		$db['pass']
+	);
 };
+$container['monolog'] = function($c){
+	$monolog = new Logger('monolog');
+	$monolog->pushProcessor(new Monolog\Processor\UidProcessor());
+	$monolog->pushHandler(new StreamHandler(__DIR__ . '/dev.log', \Monolog\Logger::DEBUG));
+	return $monolog;
+};
+
 $app = new \Slim\App($container);
 
 $app->get('/', function(Request $req, Response $res){
-	echo 'hello heroku-restful-slim';
+	$log = $this->get('monolog');
+	$log->addDebug('root handler', array('response' => $req));
+	//echo 'hello heroku-restful-slim';
+	phpinfo();
 });
 
 $app->get('/api/users', function(Request $req, Response $res){
 	$db = $this->get('db');
-	$data = $db->select('users', '*');
+	$stmt = $db->select()->from('users')->execute();
+	$data = $stmt->fetchAll();
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
 	echo json_encode($data);
@@ -47,51 +56,52 @@ $app->get('/api/users', function(Request $req, Response $res){
 $app->get('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
 	$db = $this->get('db');
-	$data = $db->select('users', '*', array('id' => $id));
+	$stmt = $db->select()->from('users')->where('id', '=', $id)->execute();
+	$data = $stmt->fetch();
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo json_encode($data[0]);
+	echo json_encode($data);
 });
 
 $app->post('/api/users', function(Request $req, Response $res){
 	$user = $req->getParsedBody();
 	$db = $this->get('db');
-	$db->insert('users', array(
-		'name' => $user['name'],
-		'age' => $user['age'],
-		'address' => $user['address']
-	));
-	$lastId = $db->pdo->lastInsertId('users_id_seq');
+	// PostgresqlではlastInsertId()でIDを取得できるようになってない
+	$insertId = $db->insert(array('name', 'age', 'address'))
+		->into('users')->values(array($user['name'], $user['age'], $user['address']))
+		->execute();
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo json_encode(array('lastId' => $lastId));
+	echo json_encode(array('insertId' => $insertId));
 });
 
 $app->put('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
 	$user = $req->getParsedBody();
 	$db = $this->get('db');
-	$data = $db->select('users', '*', array('id' => $id));
-	if(isset($user['name'])) $data[0]['name'] = $user['name'];
-	if(isset($user['age'])) $data[0]['age'] = $user['age'];
-	if(isset($user['address'])) $data[0]['address'] = $user['address'];
-	$ret = $db->update('users', array(
-		'name' => $data[0]['name'],
-		'age' => $data[0]['age'],
-		'address' => $data[0]['address']
-	), array('id' => $id));
+	$stmt = $db->select()->from('users')->where('id', '=', $id)->execute();
+	$data = $stmt->fetch();
+	if(isset($user['name'])) $data['name'] = $user['name'];
+	if(isset($user['age'])) $data['age'] = $user['age'];
+	if(isset($user['address'])) $data['address'] = $user['address'];
+	$affectedRows = $db->update(array(
+		'name' => $data['name'],
+		'age' => $data['age'],
+		'address' => $data['address']
+	))->table('users')->where('id', '=', $id)
+	->execute();
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo json_encode($data[0]);
+	echo json_encode(array('affectedRows' => $affectedRows));
 });
 
 $app->delete('/api/users/{id:[0-9]+}', function(Request $req, Response $res, $args){
 	$id = (int)$args['id'];
 	$db = $this->get('db');
-	$ret = $db->delete('users', array('id' => $id));
+	$affectedRows = $db->delete()->from('users')->where('id', '=', $id)->execute();
 	$res->withStatus(200);
 	$res->withHeader('Content-Type', 'application/json');
-	echo $ret;
+	echo json_encode(array('affectedRows' => $affectedRows));
 });
 
 $app->run();
